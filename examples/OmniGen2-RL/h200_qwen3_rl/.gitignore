@@ -1,5 +1,6 @@
 outputs/
 logs/
 _verification/
+_inference_verification/
 __pycache__/
 *.pyc

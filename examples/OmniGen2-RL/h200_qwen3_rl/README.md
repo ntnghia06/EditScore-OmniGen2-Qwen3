@@ -231,3 +231,52 @@ VRAM, convergence, wall time or compatibility of an unknown server environment.
 On the server, first set `max_train_steps: 12` and `checkpointing_steps: 12`
 to validate a complete rollout/reward/backward/save cycle, then restore the
 desired values and submit a fresh job.
+
+## Pretrained OmniGen2 inference on GEdit
+
+`generate_omnigen2_gedit.py` loads the original transformer, Qwen2.5-VL text
+encoder and VAE from `settings.json`. It loads no RL checkpoint or LoRA. A
+converted `.bin` is supported; if absent, an available local Diffusers
+`transformer/` directory is supported instead. No weights are downloaded.
+
+Defaults follow the EditScore GEdit evaluation launcher: Euler (ODE), 50 steps,
+text guidance 5.0, image guidance 1.5, CFG over the entire trajectory, original
+empty negative-prompt template, time-shift base resolution 168. Seed 20 matches
+the earlier benchmark generators. These inference defaults differ from the
+20-step SDE training rollout settings.
+
+Source images preserve aspect ratio, with long edge at most 1024 and no
+upscaling. Edge padding aligns the model canvas to multiples of 16, and is
+cropped off before saving. Output contains only edited PNG images:
+
+```text
+/datastore/anhndt/Truongtq/OtherEditingBenchmark/OmniGen2-Base/GEdit-Bench-EN/
+  background_change/<source_filename>.png
+  ...
+```
+
+Run from this folder after configuring local pretrained paths:
+
+```bash
+mkdir -p logs
+# CPU-only path/image validation, without loading weights:
+/datastore/truongtq/miniconda3/envs/qwen_vl/bin/python -B generate_omnigen2_gedit.py --dry-run
+sbatch run_generate_omnigen2_gedit.slurm
+```
+
+The Slurm allocation is normal / mig2-35, 8 CPUs, 64GB host RAM and 72 hours.
+Model CPU offload is enabled. It uses the existing OmniGen2 environment and
+stores Slurm logs in `logs/omnigen2_gedit_JOBID.{out,err}`. Timing totals are
+printed in the log, not saved into the edited-image directory.
+
+Resume skips existing PNGs only after format, dimensions and decoding checks.
+PNG writes use a temporary file, fsync and atomic replacement. Configuration
+identity/locks live under `outputs/inference_gedit`, outside the edited-image
+folder. A different seed/model/config needs a different `--output-root`; the
+script rejects mixing settings in an existing registered output folder. Do not
+run two jobs against the same output root. `--limit 5` can be appended to the
+sbatch command for an initial subset. `--overwrite` regenerates the selected
+images with the same registered configuration.
+
+CPU/mocked tests are in `test_omnigen2_gedit.py`; actual GPU inference and peak
+memory have not been validated in this workspace.
