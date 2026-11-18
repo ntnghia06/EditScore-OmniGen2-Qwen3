@@ -10,6 +10,7 @@ Loads an explicit LoRA/full training checkpoint. Only edited PNGs are saved to o
 import argparse
 from contextlib import contextmanager
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -237,6 +238,14 @@ def apply_checkpoint(transformer, checkpoint):
         restored = actual[key].detach().cpu()
         if restored.shape != value.shape or not torch.equal(restored, value.to(dtype=restored.dtype)):
             raise RuntimeError(f'LoRA tensor was not restored correctly: {key}')
+    if checkpoint['kind'] == 'peft':
+        # Keep the injected/loaded LoRA layers, but give the pipeline the original
+        # OmniGen2 module. Its predict() inspects forward's explicit parameters;
+        # a generic PeftModel.forward(*args, **kwargs) makes it drop source latents.
+        # This does NOT merge, disable or unload the adapter.
+        transformer = transformer.get_base_model()
+    if 'ref_image_hidden_states' not in inspect.signature(transformer.forward).parameters:
+        raise RuntimeError('OmniGen2 forward must expose ref_image_hidden_states for the editing pipeline')
     transformer.eval().requires_grad_(False)
     print(f'Loaded Fireward checkpoint: {weight}; format={checkpoint["kind"]}; verified LoRA tensors={len(expected)}', flush=True)
     return transformer

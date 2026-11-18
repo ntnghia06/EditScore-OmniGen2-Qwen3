@@ -339,6 +339,11 @@ with missing/invalid adapter tensors. It never falls back to base-only
 inference on a checkpoint error. Checkpoint identity is included in resume
 metadata outside the edited-image folder; a different checkpoint needs a
 different output root. All model parameters are frozen for inference.
+After validating a PEFT export, the loader passes its underlying OmniGen2
+module to the pipeline, with the injected LoRA layers still active and unmerged.
+This preserves the explicit `ref_image_hidden_states` forward parameter that
+the original pipeline inspects before forwarding source latents. Leaving the
+generic PeftModel wrapper in place causes the pipeline to omit that argument.
 
 ```bash
 mkdir -p logs

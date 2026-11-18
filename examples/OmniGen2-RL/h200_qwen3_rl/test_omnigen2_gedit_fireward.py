@@ -1,4 +1,6 @@
 """Real CPU tensor restoration with mocked PEFT plumbing; no GPU/backbone loaded."""
+import ast
+import inspect
 import json
 from pathlib import Path
 import shutil
@@ -29,6 +31,19 @@ class ToyTransformer(torch.nn.Module):
         self.to_q = torch.nn.Module()
         self.to_q.lora_A = torch.nn.ModuleDict({'default': torch.nn.Linear(2, config.r, bias=False)})
         self.to_q.lora_B = torch.nn.ModuleDict({'default': torch.nn.Linear(config.r, 2, bias=False)})
+    def forward(self, hidden_states, timestep=None, text_hidden_states=None,
+                text_attention_mask=None, freqs_cis=None, ref_image_hidden_states=None, **kwargs):
+        if ref_image_hidden_states is None:
+            raise TypeError('Source reference latents were dropped')
+        self.seen_reference = ref_image_hidden_states
+        return ref_image_hidden_states + self.to_q.lora_B['default'](self.to_q.lora_A['default'](ref_image_hidden_states))
+
+
+class GenericPeftWrapper(torch.nn.Module):
+    def get_base_model(self):
+        return self.base_model.model
+    def forward(self, *args, **kwargs):
+        return self.get_base_model()(*args, **kwargs)
 
 
 def fake_peft():
@@ -36,7 +51,7 @@ def fake_peft():
     module.LoraConfig = module.PeftConfig = Config
     def wrap(model, config):
         model.add_adapter(config)
-        wrapper = torch.nn.Module()
+        wrapper = GenericPeftWrapper()
         wrapper.base_model = torch.nn.Module()
         wrapper.base_model.model = model
         return wrapper
@@ -74,8 +89,9 @@ class FirewardTests(unittest.TestCase):
         self.assertEqual(checkpoint['kind'], 'peft')
         with patch.dict(sys.modules, {'peft': fake_peft()}):
             model = fireward.apply_checkpoint(ToyTransformer(), checkpoint)
-        self.assertTrue(torch.equal(model.base_model.model.to_q.lora_A['default'].weight, state['base_model.model.to_q.lora_A.weight']))
-        self.assertTrue(torch.equal(model.base_model.model.backbone, torch.zeros(2, 2)))
+        self.assertIsInstance(model, ToyTransformer)
+        self.assertTrue(torch.equal(model.to_q.lora_A['default'].weight, state['base_model.model.to_q.lora_A.weight']))
+        self.assertTrue(torch.equal(model.backbone, torch.zeros(2, 2)))
         self.assertTrue(all(not parameter.requires_grad for parameter in model.parameters()))
         self.assertFalse(model.training)
 
@@ -111,7 +127,38 @@ class FirewardTests(unittest.TestCase):
         save_file(state, str(directory / 'adapter_model.safetensors'))
         with patch.dict(sys.modules, {'peft': fake_peft()}):
             result = fireward.apply_checkpoint(ToyTransformer(), fireward.resolve_checkpoint(directory))
-        self.assertTrue(torch.equal(result.base_model.model.to_q.lora_A['default'].weight, state['to_q.lora_A.weight']))
+        self.assertTrue(torch.equal(result.to_q.lora_A['default'].weight, state['to_q.lora_A.weight']))
+
+    def test_original_pipeline_predict_preserves_source_and_active_lora(self):
+        # Execute the actual repo predict() method, including its signature check.
+        path = Path(__file__).resolve().parent.parent / 'omnigen2/pipelines/omnigen2/pipeline_omnigen2.py'
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'OmniGen2Pipeline')
+        predict = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == 'predict')
+        namespace = {'inspect': inspect}
+        exec(compile(ast.Module(body=[predict], type_ignores=[]), '<original_pipeline_predict>', 'exec'), namespace)
+        directory, _ = self.adapter()
+        fake_accelerate = ModuleType('accelerate')
+        utils = ModuleType('accelerate.utils')
+        utils.extract_model_from_parallel = lambda model: model
+        fake_accelerate.utils = utils
+        reference = torch.ones(1, 2)
+        with patch.dict(sys.modules, {'peft': fake_peft(), 'accelerate': fake_accelerate, 'accelerate.utils': utils}):
+            checkpoint = fireward.resolve_checkpoint(directory)
+            config = Config(r=1)
+            broken_wrapper = fake_peft().get_peft_model(ToyTransformer(), config)
+            broken_pipeline = SimpleNamespace(mixed_precision=False, transformer=broken_wrapper)
+            kwargs = dict(t=torch.tensor(0.5), latents=torch.zeros(1, 2), text_hidden_states=None,
+                          text_attention_mask=None, ref_image_hidden_states=reference, freqs_cis=None)
+            with self.assertRaisesRegex(TypeError, 'dropped'):
+                namespace['predict'](broken_pipeline, **kwargs)
+            restored = fireward.apply_checkpoint(ToyTransformer(), checkpoint)
+            fixed_pipeline = SimpleNamespace(mixed_precision=False, transformer=restored)
+            output = namespace['predict'](fixed_pipeline, **kwargs)
+        self.assertIs(restored.seen_reference, reference)
+        # Nonzero LoRA values from the checkpoint still affect the prediction.
+        self.assertTrue(torch.allclose(output, torch.full((1, 2), 1.375)))
+        self.assertIn('ref_image_hidden_states', inspect.signature(restored.forward).parameters)
 
     def test_full_state_requires_original_lora_config(self):
         directory = self.root / 'checkpoint-120'
