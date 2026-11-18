@@ -304,3 +304,51 @@ images with the same registered configuration.
 
 CPU/mocked tests are in `test_omnigen2_gedit.py`; actual GPU inference and peak
 memory have not been validated in this workspace.
+
+## Fireward checkpoint inference on GEdit
+
+The standalone `generate_omnigen2_gedit_fireward.py` and
+`run_generate_omnigen2_gedit_fireward.slurm` add the requested `_fireward`
+suffix to the code filenames. They load the original pretrained components
+and then the trained checkpoint. PNG filenames retain the source filename so
+the benchmark evaluator can find them. Output is separate from the base model:
+
+```text
+/datastore/anhndt/Truongtq/OtherEditingBenchmark/OmniGen2-Fireward/GEdit-Bench-EN/<task_type>/<source_filename>.png
+```
+
+Edit `PRETRAINED_ROOT` (or the three individual paths), `CHECKPOINT_PATH` and
+`LIMIT` in the Slurm file. The initial checkpoint example is:
+
+```text
+<h200_qwen3_rl>/outputs/job_53794/checkpoints/checkpoint-120
+```
+
+Use an actual completed checkpoint directory. The parent `checkpoints/` is
+not a checkpoint: the script does not silently choose the latest step. It
+prefers `checkpoint-120/lora_adapter/` and also accepts that adapter directory
+directly. Legacy direct-Diffusers LoRA prefixes are normalized in memory; the
+checkpoint files are not changed. If only a full `model.safetensors` exists,
+the script reconstructs the adapter from the original job's `train.yml`, then
+strictly restores the full model state. An explicit `--lora-config` YAML/PEFT
+JSON can be passed when the original config is elsewhere. Rank and alpha are
+never guessed from the current training recipe.
+
+The loader verifies all restored LoRA keys/tensors and refuses a checkpoint
+with missing/invalid adapter tensors. It never falls back to base-only
+inference on a checkpoint error. Checkpoint identity is included in resume
+metadata outside the edited-image folder; a different checkpoint needs a
+different output root. All model parameters are frozen for inference.
+
+```bash
+mkdir -p logs
+sbatch run_generate_omnigen2_gedit_fireward.slurm
+# Optional subset, overriding LIMIT in the Slurm file:
+sbatch run_generate_omnigen2_gedit_fireward.slurm --limit 10
+```
+
+Resource allocation, seed 20, Euler 50-step sampling, guidance 5/1.5, resizing
+and image resume are the same as the pretrained GEdit generator. `LIMIT=0`
+means all samples. Logs are `logs/omnigen2_gedit_fireward_JOBID.{out,err}`.
+Tests in `test_omnigen2_gedit_fireward.py` use real CPU tensors and mocked PEFT
+plumbing; loading the real OmniGen2/PEFT versions on the server remains untested.
