@@ -10,6 +10,7 @@ EditScore-original/                         # or EditScore; the repo name is irr
       settings.json
       train.yml
       prepare_run.py
+      prepare_pretrained.slurm
       train_h200.py
       reward_runtime.py
       reward_server.py
@@ -97,6 +98,23 @@ With empty fields, the transformer defaults to the repo's existing
 are searched offline in `hf_cache_roots`. It does **not** download weights.
 Add the actual HF hub directory to `hf_cache_roots` if needed. A model ID alone
 is not a local path in these explicit fields.
+
+If the transformer was downloaded in Diffusers format to
+`outputs/pretrained/OmniGen2/transformer`, convert it on a GPU compute node:
+
+```bash
+mkdir -p logs
+sbatch prepare_pretrained.slurm
+```
+
+Wait for this job to succeed before submitting training. It reads only local
+weights and creates `outputs/pretrained/OmniGen2/transformer/pytorch_model.bin`
+in BF16. Set `omnigen_transformer_bin` to that absolute path. It validates an
+existing `.bin` and skips conversion if one is already present. The converter
+uses a normal-partition MIG 35GB allocation and the same environment search as
+the training script. A disk quota error must be resolved before restoring
+source, converting weights or saving checkpoints; cloning again cannot bypass
+the storage limit.
 
 ## Submit
 
