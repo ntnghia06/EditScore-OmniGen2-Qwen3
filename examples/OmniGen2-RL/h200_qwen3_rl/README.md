@@ -235,9 +235,14 @@ desired values and submit a fresh job.
 ## Pretrained OmniGen2 inference on GEdit
 
 `generate_omnigen2_gedit.py` loads the original transformer, Qwen2.5-VL text
-encoder and VAE from `settings.json`. It loads no RL checkpoint or LoRA. A
+encoder and VAE from explicit command-line paths. Set `TRANSFORMER_PATH`,
+`TEXT_ENCODER_PATH` and `VAE_MODEL_PATH` at the top of
+`run_generate_omnigen2_gedit.slurm`. It loads no RL checkpoint or LoRA. A
 converted `.bin` is supported; if absent, an available local Diffusers
 `transformer/` directory is supported instead. No weights are downloaded.
+Transformer architecture is read from its adjacent pretrained `config.json`,
+not from the training YAML. Neither `settings.json` nor `train.yml` is required
+for inference. `--settings` remains an optional fallback for older invocations.
 
 Defaults follow the EditScore GEdit evaluation launcher: Euler (ODE), 50 steps,
 text guidance 5.0, image guidance 1.5, CFG over the entire trajectory, original
@@ -255,14 +260,33 @@ cropped off before saving. Output contains only edited PNG images:
   ...
 ```
 
-Run from this folder after configuring local pretrained paths:
+Run from this folder after editing the pretrained paths in the Slurm file:
 
 ```bash
 mkdir -p logs
-# CPU-only path/image validation, without loading weights:
-/datastore/truongtq/miniconda3/envs/qwen_vl/bin/python -B generate_omnigen2_gedit.py --dry-run
 sbatch run_generate_omnigen2_gedit.slurm
 ```
+
+Set `LIMIT=0` in the Slurm file to process all samples (the default), or
+`LIMIT=100` for the first 100. The Python flags are `--limit 100` and optional
+`--start-index 100`; omitting `--limit` or setting it to 0 processes all remaining
+samples. The limit applies to metadata rows after duplicate-ID filtering, not
+to the number of newly generated images. Valid existing outputs are skipped.
+
+Direct invocation example (can also add `--dry-run` to validate on CPU):
+
+```bash
+python -B generate_omnigen2_gedit.py \
+  --transformer-path /local/pretrained/OmniGen2 \
+  --text-encoder /local/pretrained/Qwen2.5-VL-3B-Instruct \
+  --vae-model /local/pretrained/FLUX.1-dev \
+  --limit 100 --cpu-offload
+```
+
+Alternatively pass `--pretrained-root /local/pretrained` when the three model
+directories have the names shown above. Explicit paths override the common
+root and optional settings fallback. The VAE root must contain `vae/config.json`;
+the transformer directory must contain its own `config.json` beside the weights.
 
 The Slurm allocation is normal / mig2-35, 8 CPUs, 64GB host RAM and 72 hours.
 Model CPU offload is enabled. It uses the existing OmniGen2 environment and

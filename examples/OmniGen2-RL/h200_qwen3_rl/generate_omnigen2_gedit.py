@@ -2,6 +2,7 @@
 """Generate GEdit edited images with the unmodified OmniGen2 pretrained policy.
 
 Uses this repo's OmniGen2 classes and separate local transformer/text encoder/VAE.
+Pretrained paths can be passed directly; no training YAML/settings is required.
 Output: OmniGen2-Base/GEdit-Bench-EN/<task_type>/<source_filename>.png.
 No training checkpoint, LoRA, source copy or prompt file is saved to output_root.
 """
@@ -93,18 +94,36 @@ def read_pairs(metadata, data_root, output_root):
     return rows
 
 
-def pretrained_paths(settings_file):
-    settings = json.loads(settings_file.read_text(encoding='utf-8-sig'))
+def pretrained_paths(settings_file=None, *, transformer=None, text_encoder=None, vae_model=None,
+                     pretrained_root=None):
+    settings = json.loads(settings_file.read_text(encoding='utf-8-sig')) if settings_file else {}
+    root = Path(pretrained_root).expanduser().resolve() if pretrained_root else None
     paths = {}
-    for field in ('text_encoder', 'vae_model'):
-        if not settings.get(field):
-            raise ValueError(f'Set the absolute local {field} path in {settings_file}')
-        paths[field] = Path(settings[field]).expanduser().resolve()
-    paths['transformer_bin'] = Path(settings['omnigen_transformer_bin']).expanduser().resolve() if settings.get('omnigen_transformer_bin') else None
-    paths['transformer_dir'] = paths['transformer_bin'].parent if paths['transformer_bin'] else settings_file.parent / 'outputs/pretrained/OmniGen2/transformer'
-    if not paths['transformer_bin'] or not paths['transformer_bin'].is_file():
-        if not (paths['transformer_dir'] / 'config.json').is_file():
-            raise FileNotFoundError('Missing transformer .bin and downloaded transformer/config.json')
+    for field, explicit, folder in (('text_encoder', text_encoder, 'Qwen2.5-VL-3B-Instruct'),
+                                     ('vae_model', vae_model, 'FLUX.1-dev')):
+        value = explicit or (root / folder if root else None) or settings.get(field)
+        if not value:
+            raise ValueError(f'Pass --{field.replace("_", "-")} or --pretrained-root; optional --settings is also supported')
+        paths[field] = Path(value).expanduser().resolve()
+    candidate = transformer or (root / 'OmniGen2' if root else None) or settings.get('omnigen_transformer_bin')
+    if not candidate:
+        raise ValueError('Pass --transformer-path or --pretrained-root')
+    candidate = Path(candidate).expanduser().resolve()
+    if not candidate.exists():
+        raise FileNotFoundError(f'Transformer path does not exist: {candidate}')
+    if candidate.is_file():
+        if candidate.suffix != '.bin':
+            raise ValueError('Use a pytorch_model.bin file or a local Diffusers transformer directory')
+        paths['transformer_bin'] = candidate
+        paths['transformer_dir'] = candidate.parent
+    else:
+        directory = candidate / 'transformer' if (candidate / 'transformer').is_dir() else candidate
+        paths['transformer_dir'] = directory
+        paths['transformer_bin'] = directory / 'pytorch_model.bin' if (directory / 'pytorch_model.bin').is_file() else None
+    if paths['transformer_bin'] and not paths['transformer_bin'].stat().st_size:
+        raise ValueError(f'Transformer .bin is empty: {paths["transformer_bin"]}')
+    if not (paths['transformer_dir'] / 'config.json').is_file():
+        raise FileNotFoundError(f'Transformer config.json must be beside its weights: {paths["transformer_dir"]}')
     for path in (paths['text_encoder'] / 'config.json', paths['vae_model'] / 'vae/config.json'):
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -113,7 +132,6 @@ def pretrained_paths(settings_file):
 
 def load_pipeline(args):
     import torch
-    import yaml
     from accelerate import init_empty_weights
     from diffusers import AutoencoderKL
     from transformers import AutoProcessor, Qwen2_5_VLModel
@@ -125,9 +143,9 @@ def load_pipeline(args):
     paths = args.pretrained
     weight_path = paths['transformer_bin']
     if weight_path and weight_path.is_file():
-        config = yaml.safe_load((ROOT / 'train.yml').read_text())
+        config = json.loads((paths['transformer_dir'] / 'config.json').read_text())
         with init_empty_weights():
-            transformer = OmniGen2Transformer2DModel(**config['model']['arch_opt'])
+            transformer = OmniGen2Transformer2DModel.from_config(config)
         state = torch.load(weight_path, map_location='cpu', mmap=True, weights_only=True)
         transformer.load_state_dict(state, assign=True, strict=True)
         del state
@@ -262,7 +280,11 @@ def generate(args):
 def main():
     from PIL import Image
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--settings', type=Path, default=ROOT / 'settings.json')
+    parser.add_argument('--settings', type=Path, help='Optional fallback settings; explicit pretrained arguments take precedence')
+    parser.add_argument('--pretrained-root', type=Path, help='Parent containing OmniGen2/, Qwen2.5-VL-3B-Instruct/, FLUX.1-dev/')
+    parser.add_argument('--transformer-path', type=Path, help='Local OmniGen2 root, transformer directory, or pytorch_model.bin')
+    parser.add_argument('--text-encoder', type=Path, help='Local Qwen2.5-VL-3B-Instruct directory')
+    parser.add_argument('--vae-model', type=Path, help='Local FLUX.1-dev directory containing vae/config.json')
     parser.add_argument('--metadata', type=Path, default=BENCH / 'GEdit-Bench-EN/metadata.jsonl')
     parser.add_argument('--data-root', type=Path, default=BENCH / 'GEdit-Bench-EN')
     parser.add_argument('--output-root', type=Path, default=BENCH / 'OmniGen2-Base/GEdit-Bench-EN')
@@ -274,21 +296,24 @@ def main():
     parser.add_argument('--max-long-edge', type=int, default=1024)
     parser.add_argument('--cpu-offload', action='store_true')
     parser.add_argument('--start-index', type=int, default=0)
-    parser.add_argument('--limit', type=int)
+    parser.add_argument('--limit', type=int, default=0, help='Number of metadata samples to process; default 0 means all')
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
-    if args.steps < 1 or args.seed < 0 or args.start_index < 0 or (args.limit is not None and args.limit < 1):
+    if args.steps < 1 or args.seed < 0 or args.start_index < 0 or args.limit < 0:
         parser.error('Invalid steps, seed, start-index or limit')
     if args.max_long_edge < 16 or args.max_long_edge % 16:
         parser.error('max-long-edge must be >=16 and divisible by 16')
     if not math.isfinite(args.text_guidance) or not math.isfinite(args.image_guidance) or args.text_guidance <= 1 or args.image_guidance <= 1:
         parser.error('This GEdit preset requires both guidance scales > 1')
     for field in ('settings', 'metadata', 'data_root', 'output_root'):
-        setattr(args, field, getattr(args, field).expanduser().resolve())
-    args.pretrained = pretrained_paths(args.settings)
+        value = getattr(args, field)
+        if value is not None:
+            setattr(args, field, value.expanduser().resolve())
+    args.pretrained = pretrained_paths(args.settings, transformer=args.transformer_path,
+        text_encoder=args.text_encoder, vae_model=args.vae_model, pretrained_root=args.pretrained_root)
     all_rows = read_pairs(args.metadata, args.data_root, args.output_root)
-    args.rows = all_rows[args.start_index:args.start_index + args.limit if args.limit is not None else None]
+    args.rows = all_rows[args.start_index:args.start_index + args.limit if args.limit else None]
     if not args.rows:
         parser.error('No selected samples')
     for index, row in enumerate(args.rows, 1):

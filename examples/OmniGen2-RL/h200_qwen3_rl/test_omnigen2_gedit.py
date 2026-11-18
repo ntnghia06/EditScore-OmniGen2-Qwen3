@@ -36,6 +36,7 @@ class GEditTests(unittest.TestCase):
         weight = self.root / 'transformer/pytorch_model.bin'
         weight.parent.mkdir()
         weight.write_bytes(b'fake weight, never loaded')
+        (weight.parent / 'config.json').write_text('{}')
         settings = self.root / 'settings.json'
         settings.write_text(json.dumps({**{key: str(value) for key, value in paths.items()}, 'omnigen_transformer_bin': str(weight)}))
         args = argparse.Namespace(metadata=metadata, settings=settings, data_root=self.root / 'data',
@@ -71,6 +72,38 @@ class GEditTests(unittest.TestCase):
             generator.main()
         generate.assert_not_called()
         self.assertFalse(args.output_root.exists())
+
+    def test_explicit_paths_and_limit_without_settings(self):
+        args, row = self.fixture()
+        args.settings.unlink()
+        image = args.data_root / 'images/background_change/source_two.png'
+        Image.new('RGB', (64, 32)).save(image)
+        second = {**row, 'key': 'second', 'image': 'images/background_change/source_two.png'}
+        args.metadata.write_text(json.dumps(row) + '\n' + json.dumps(second) + '\n')
+        argv = ['generate_omnigen2_gedit.py', '--transformer-path', str(args.pretrained['transformer_dir']),
+                '--text-encoder', str(args.pretrained['text_encoder']), '--vae-model', str(args.pretrained['vae_model']),
+                '--metadata', str(args.metadata), '--data-root', str(args.data_root),
+                '--output-root', str(args.output_root)]
+        with patch.object(sys, 'argv', argv), patch.object(generator, 'generate') as generate:
+            generator.main()
+        self.assertEqual(len(generate.call_args.args[0].rows), 2)
+        with patch.object(sys, 'argv', argv + ['--limit', '1']), patch.object(generator, 'generate') as generate:
+            generator.main()
+        self.assertEqual(len(generate.call_args.args[0].rows), 1)
+        self.assertFalse(args.settings.exists())
+        with self.assertRaises(FileNotFoundError):
+            generator.pretrained_paths(transformer=self.root / 'missing',
+                text_encoder=args.pretrained['text_encoder'], vae_model=args.pretrained['vae_model'])
+
+    def test_common_pretrained_root(self):
+        args, _ = self.fixture()
+        root = self.root / 'pretrained'
+        shutil.copytree(args.pretrained['text_encoder'], root / 'Qwen2.5-VL-3B-Instruct')
+        shutil.copytree(args.pretrained['vae_model'], root / 'FLUX.1-dev')
+        shutil.copytree(args.pretrained['transformer_dir'], root / 'OmniGen2/transformer')
+        paths = generator.pretrained_paths(pretrained_root=root)
+        self.assertEqual(paths['transformer_bin'], (root / 'OmniGen2/transformer/pytorch_model.bin').resolve())
+        self.assertEqual(paths['text_encoder'], (root / 'Qwen2.5-VL-3B-Instruct').resolve())
 
     def test_generation_resume_and_config_guard(self):
         args, _ = self.fixture()
