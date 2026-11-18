@@ -1,0 +1,21 @@
+{
+  "metadata": "/datastore/anhndt/Truongtq/TrainingEditingModel/RunFLUX/unique_metadata.jsonl",
+  "data_root": "/datastore/shared/datasets/EditReward-Data/extracted_data",
+  "reward_project": "/datastore/truongtq/TrainingRewardModel/TrainingRewardModel/Qwen3-VL-Embedding",
+  "reward_pretrained": "/datastore/truongtq/TrainingRewardModel/Models/Qwen3-VL-Reranker-8B",
+  "reward_checkpoint": "/datastore/truongtq/TrainingRewardModel/TrainingRewardModel/Qwen3-VL-Embedding/output_training/Stage2_R0RelKL10kDecay98CosineOnceBatch4Eval5",
+  "omnigen_transformer_bin": "",
+  "text_encoder": "",
+  "vae_model": "",
+  "hf_cache_roots": [
+    "/datastore/anhndt/Truongtq/TrainingRewardModel/TrainingEditingModel/FLUX2/hub",
+    "/datastore/anhndt/Truongtq/TrainingEditingModel/FLUX2/hub",
+    "/datastore/truongtq/.cache/huggingface/hub",
+    "/datastore/anhndt/.cache/huggingface/hub",
+    "/datastore/truongtq/TrainingRewardModel/TrainingEditingModel/EditScore/examples/OmniGen2-RL/pretrained_models"
+  ],
+  "relevance_threshold": 0.5,
+  "empty_metric_policy": "error",
+  "reward_min_pixels": null,
+  "reward_max_pixels": 262144
+}
