@@ -139,9 +139,11 @@ Sửa settings hoặc seed sau khi submit không đổi snapshot của job đã 
 một GPU. Model module vẫn được import từ repo, nên giữ source trong lúc chạy.
 Trainer chỉ thêm guard dừng max_train_steps ở đầu vòng dataloader.
 
-Các file chuẩn bị/launch thủ công vẫn giữ để dùng tùy chọn. Bản lưu upstream
-ở upstream_reference/ chỉ phục vụ kiểm chứng SHA256, không dùng reward/data
-gốc của nó cho job này.
+launch_policy.sh và start_reward.sh được auto_run.py gọi, nên cần giữ.
+upstream_reference/ chỉ giữ hai YAML policy gốc và manifest SHA256; bước
+prepare dùng chúng để kiểm tra hyperparameter. Đã bỏ config reward/data,
+script launch upstream và biến thể Avg@8 không được bộ chạy này sử dụng.
+Hai file test phục vụ kiểm chứng bộ chạy và không được đưa vào snapshot job.
 
 Đã kiểm tra config, chuẩn bị dữ liệu bằng fixture CPU, topology 8/32 GPU,
 snapshot, readiness và cleanup qua process mock. Chưa thử allocation Slurm

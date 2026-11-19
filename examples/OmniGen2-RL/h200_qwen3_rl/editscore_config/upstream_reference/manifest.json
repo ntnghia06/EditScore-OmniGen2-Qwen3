@@ -9,64 +9,10 @@
       "bytes": 2790
     },
     {
-      "path": "options/omnigen2_edit_rl_4machine_editscore7b_avg8.yml",
-      "upstream_path": "examples/OmniGen2-RL/options/omnigen2_edit_rl_4machine_editscore7b_avg8.yml",
-      "sha256": "e71426efd67486d740a218ede468fdbab3f21d1bff49fb9fb045ebcc3209e908",
-      "bytes": 2790
-    },
-    {
       "path": "options/omnigen2_edit_rl_single_machine_editscore7b.yml",
       "upstream_path": "examples/OmniGen2-RL/options/omnigen2_edit_rl_single_machine_editscore7b.yml",
       "sha256": "60fb5dd93a40314e4390e3de6cab1f51df6da8f4cfee064e882d8fa40e88454e",
       "bytes": 2786
-    },
-    {
-      "path": "scripts/train/omnigen2_edit_rl_4machine_editscore7b_avg4.sh",
-      "upstream_path": "examples/OmniGen2-RL/scripts/train/omnigen2_edit_rl_4machine_editscore7b_avg4.sh",
-      "sha256": "3eaf17946ca0411de89690fc323a187499054527ba7b639633d74e41da759f05",
-      "bytes": 1616
-    },
-    {
-      "path": "scripts/train/omnigen2_edit_rl_4machine_editscore7b_avg8.sh",
-      "upstream_path": "examples/OmniGen2-RL/scripts/train/omnigen2_edit_rl_4machine_editscore7b_avg8.sh",
-      "sha256": "e9268e99d1a91fc8d9fd593c05fd787faa8bfeb4d5a2c249994902fcf34f15ed",
-      "bytes": 1647
-    },
-    {
-      "path": "scripts/train/omnigen2_edit_rl_single_machine_editscore7b.sh",
-      "upstream_path": "examples/OmniGen2-RL/scripts/train/omnigen2_edit_rl_single_machine_editscore7b.sh",
-      "sha256": "96860b53865f2dd13b2c57012e6a665563f2a40dd53188471acd36d5e1a51a0a",
-      "bytes": 1617
-    },
-    {
-      "path": "reward_server/server_configs/editscore_7B.yml",
-      "upstream_path": "examples/OmniGen2-RL/reward_server/server_configs/editscore_7B.yml",
-      "sha256": "55bbade8ce03cf6945c5420644189f1b22801cd5ede7915b5b90ddbe68a7c6ec",
-      "bytes": 470
-    },
-    {
-      "path": "reward_server/server_configs/editscore_7B_avg4.yml",
-      "upstream_path": "examples/OmniGen2-RL/reward_server/server_configs/editscore_7B_avg4.yml",
-      "sha256": "2c3b6d5f49c18a977689d09c05432c8006986ed33fb0e5597897f316de91ca42",
-      "bytes": 470
-    },
-    {
-      "path": "reward_server/server_configs/editscore_7B_avg8.yml",
-      "upstream_path": "examples/OmniGen2-RL/reward_server/server_configs/editscore_7B_avg8.yml",
-      "sha256": "af25328b25883eec399f568cade3ae05db510c8c9ac6a7c11376a33d59b9aeb6",
-      "bytes": 470
-    },
-    {
-      "path": "data_configs/train/example/train.yml",
-      "upstream_path": "examples/OmniGen2-RL/data_configs/train/example/train.yml",
-      "sha256": "24cbb8bce700643eca88e7d6a7234ba0b72de4621ef157e6ca0e817aef743927",
-      "bytes": 100
-    },
-    {
-      "path": "data_configs/train/example/edit/all.yml",
-      "upstream_path": "examples/OmniGen2-RL/data_configs/train/example/edit/all.yml",
-      "sha256": "38712ea6c6c0fdbe40c1b555d83b23aaf4c69f6b17720ba875717f494ea6f6da",
-      "bytes": 133
     }
   ]
 }
