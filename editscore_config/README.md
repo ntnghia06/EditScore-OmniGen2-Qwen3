@@ -1,15 +1,13 @@
 # Cấu hình OmniGen2 Flow-GRPO gốc của EditScore
 
-Thư mục này lưu nguyên cấu hình của repo gốc, dùng làm baseline và tài liệu
-đối chiếu thực nghiệm. Các file YAML và shell được sao chép nguyên byte từ:
+Thư mục này mô tả thiết lập training OmniGen2 Flow-GRPO của EditScore.
+Các file YAML và shell được sao chép nguyên byte từ:
 
 - Repo: https://github.com/VectorSpaceLab/EditScore
 - Commit: `4609c5d2ebb62fdebf665d3c924686d896ef1f74`
 - Thư mục nguồn: `examples/OmniGen2-RL/`
 
 `manifest.json` ghi đường dẫn nguồn, kích thước và SHA256 của từng file.
-Không thay reward EditScore bằng Qwen3, không giảm batch để vừa một H200,
-không thay learning rate hoặc thêm cơ chế checkpoint của bản tích hợp.
 Đây là thiết lập lấy từ source tại commit trên; không phải khẳng định tất cả
 biến thể đều là cấu hình dùng cho mọi kết quả trong bài báo.
 
@@ -125,8 +123,8 @@ Hướng dẫn repo gốc dùng `EditScore/EditScore-RL-Data`, chuyển đườn
 thành tuyệt đối và dùng `scripts/data/extract_9_tasks.py` để bỏ text change và
 portrait beautification. Điền JSONL đã xử lý vào
 `examples/OmniGen2-RL/data_configs/train/example/edit/all.yml`.
-File trong bản chụp vẫn giữ đường dẫn ví dụ của upstream; không trỏ sẵn vào
-unique_metadata.jsonl của EditReward trên HPC của bạn.
+File trong bản chụp giữ đường dẫn ví dụ của upstream. Đặt đường dẫn JSONL
+thực tế trong data_configs/train/example/edit/all.yml trước khi chạy.
 
 Cần môi trường policy, dependency của repo và môi trường/backend vLLM cho
 reward server; pretrained transformer OmniGen2 dạng bin, Qwen2.5-VL-3B,
@@ -145,7 +143,7 @@ tìm train.py theo vị trí tương đối của script.
 Ví dụ khi đã được cấp đủ GPU, chuẩn bị dữ liệu/pretrained và reward server:
 
 ```bash
-cd /path/to/EditScore-Qwen3-new/examples/OmniGen2-RL
+cd /path/to/EditScore/examples/OmniGen2-RL
 
 # Recipe gốc: 1 máy, 8 GPU policy.
 bash scripts/train/omnigen2_edit_rl_single_machine_editscore7b.sh \
@@ -161,37 +159,3 @@ Các shell này không phải Slurm batch script. Lệnh trên phải chạy tro
 nguyên đã được scheduler cấp, không chạy training trên login node. FSDP gốc
 dùng HYBRID_SHARD và SHARDED_STATE_DICT. Bản chụp không bổ sung Slurm hoặc
 thay đổi mô hình phân tán gốc.
-
-## Đối chiếu với thực nghiệm Qwen3 một H200 của bạn
-
-Thiết lập được người dùng cung cấp ngày 2026-11-19, không phải kết quả benchmark:
-
-| Thành phần | Baseline single-machine gốc | Thực nghiệm Qwen3 hiện tại |
-|---|---|---|
-| GPU policy | 8 | 1 H200 full 141GB, dùng chung GPU với reward |
-| Reward | EditScore-7B, sinh SC/PQ | Qwen3-VL-Reranker-8B + head Stage2 |
-| Gộp reward | sqrt(SC × PQ) / 10 | Trung bình raw score của metric được chọn |
-| Chọn metric | SC/PQ cố định | Relevance trung bình nhóm >= 0.5 |
-| Dataset | EditScore-RL-Data, lọc 9 task | EditReward unique source/instruction, 8132 điều kiện |
-| Prompt mỗi sampling | 12 | 1 |
-| Rollout mỗi sampling | 144 | 12 |
-| Update mỗi sampling | 2 | 1 |
-| Gradient accumulation YAML | 1 | 12 |
-| LR / warmup | 4e-4 / 0 | 5e-5 / 20 |
-| Max optimizer updates | 1000 | 200 |
-| LoRA | rank 32, alpha 64 | rank 32, alpha 64 |
-| Checkpoint | Cơ chế upstream | Compact LoRA + optimizer/scheduler/RNG |
-
-Reward checkpoint của thực nghiệm Qwen3:
-
-```text
-/datastore/truongtq/TrainingRewardModel/TrainingRewardModel/Qwen3-VL-Embedding/output_training/Stage2_R0RelKL10kDecay98CosineOnceBatch4Eval5
-```
-
-Config và code tích hợp H200 nằm ở
-`examples/OmniGen2-RL/h200_qwen3_rl/`. Bản config local có thể khác YAML đã
-sửa trên server; thông tin thực nghiệm trong bảng dựa trên YAML người dùng
-đã cung cấp. Không có số chất lượng, thời gian hoàn tất hoặc kết luận ưu thế
-nào được suy ra từ việc lưu các config này. Khi so sánh kết quả, dùng cùng
-tập đánh giá, seed, cấu hình inference và evaluator độc lập; không so trực
-tiếp reward_mean của hai reward model khác thang điểm.
