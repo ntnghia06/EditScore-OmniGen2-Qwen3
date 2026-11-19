@@ -12,6 +12,7 @@ EditScore-original/                         # or EditScore; the repo name is irr
       prepare_run.py
       prepare_pretrained.slurm
       train_h200.py
+      compact_checkpoint.py
       reward_runtime.py
       reward_server.py
       run_train.slurm
@@ -191,28 +192,48 @@ h200_qwen3_rl/
   outputs/
     job_JOBID/
       train.yml, settings.json, data.yml, training_pairs.jsonl
-      train_h200.py, reward_server.py, reward_runtime.py
+      train_h200.py, compact_checkpoint.py, reward_server.py, reward_runtime.py
       checkpoints/
         logs/
         tokenizer/
         checkpoint-120/
-          model.safetensors, optimizer.bin, ...
+          optimizer.bin, random_states_0.pkl, lora_scheduler.pt, ...
+          omnigen2_checkpoint.json, checkpoint_complete.json
           lora_adapter/
             adapter_config.json
             adapter_model.safetensors
         ...
 ```
 
-Accelerate filenames can vary with the installed version. Full optimizer/RNG
-checkpoints are saved every 120 optimizer steps and at the end; at most two
-checkpoint directories are retained by the original retention logic. The
-additional `lora_adapter` export is for inference. Frozen text encoder weights
-are not copied into outputs. Full checkpoints still include the frozen
-transformer, so reserve tens of GB and check your **account quota**, not only
-filesystem free space.
+Accelerate filenames can vary with the installed version. By default,
+`train.checkpoint_format` is `lora` (the key can be omitted). Save/load hooks
+replace full model serialization with the portable `lora_adapter` export.
+Optimizer/scaler/RNG state is still saved by Accelerate, and the scheduler is
+also saved explicitly. Frozen transformer, VAE and text encoder weights are
+not copied into each checkpoint. For rank 32 / ~20.43M FP32 LoRA parameters,
+LoRA weights plus two FP32 Adam moments require roughly 245MB before minor
+metadata overhead, instead of a full transformer copy of several GB. These
+are estimates; actual artifacts determine the size printed at save time.
+
+Checkpoints are saved at the configured interval and at the end (the template
+uses 120 steps and retains two). The same `lora_adapter` directory works with
+the Fireward inference script. Frozen pretrained weights must remain available
+when restoring training. The hooks validate LoRA configuration and pretrained
+paths; they can also load a legacy full-model checkpoint via Accelerate's
+normal loader. This is model/optimizer restoration, not a new exact mid-rollout
+resume implementation. To explicitly retain the former full-model behavior,
+set `train.checkpoint_format: full`; this again requires several GB per save.
+
+Checkpoint files are first written to `.checkpoint-N.incomplete`, fsynced, and
+then renamed to `checkpoint-N` only on success. A quota failure leaves the
+hidden incomplete folder for inspection; it is not a completed training state.
+The Slurm script also performs a real 512MiB write/fsync/delete probe before
+loading either model. This can fail early on quota problems, but does not
+reserve space or guarantee that later writes fit. Keep enough quota for all
+retained checkpoints and other jobs. `df` alone does not show user quota.
 
 Each submit creates a new `outputs/job_JOBID` and starts fresh. The config and
-three executable Python files are frozen when the job starts; edits while a
+four executable Python files are frozen when the job starts; edits while a
 job is queued still apply when it starts. This integration does not implement
 an exact mid-rollout resume protocol. Do not assume that changing
 `resume_from_checkpoint` provides bit-for-bit continuation.

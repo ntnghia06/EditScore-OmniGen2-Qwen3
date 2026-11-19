@@ -47,7 +47,7 @@ RUN_DIR="$BUNDLE_DIR/outputs/job_${SLURM_JOB_ID}"
 nvidia-smi
 "$TRAIN_PY" -B -c 'from transformers import Qwen2_5_VLModel; import accelerate, peft, diffusers, yaml, timm; print("Policy dependencies OK", flush=True)'
 "$REWARD_PY" -B -c 'from transformers import Qwen3VLForConditionalGeneration; import peft, swift, qwen_vl_utils; print("Reward dependencies OK", flush=True)'
-"$TRAIN_PY" -B "$BUNDLE_DIR/prepare_run.py" --bundle "$BUNDLE_DIR" --run-dir "$RUN_DIR"
+"$TRAIN_PY" -B "$BUNDLE_DIR/prepare_run.py" --bundle "$BUNDLE_DIR" --run-dir "$RUN_DIR" --write-probe-mib 512
 
 REWARD_PID=""
 cleanup() {

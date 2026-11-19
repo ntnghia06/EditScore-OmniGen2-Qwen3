@@ -258,23 +258,9 @@ def _single_all_gather_object(output, value, *args, **kwargs):
 
 
 def save_training_checkpoint(accelerator, model, path):
-    """Keep optimizer/RNG state and an additional portable LoRA export."""
-    accelerator.save_state(path)
-    from peft import get_peft_model_state_dict
-    from safetensors.torch import save_file
-    raw = accelerator.unwrap_model(model)
-    destination = Path(path) / 'lora_adapter'
-    destination.mkdir(parents=True, exist_ok=True)
-    state = get_peft_model_state_dict(raw, adapter_name='default')
-    if not state or not all('lora_' in key for key in state):
-        raise RuntimeError('Expected a nonempty LoRA-only state')
-    # Diffusers attaches LoRA directly; portable PEFT checkpoints use the
-    # PeftModel wrapper's base_model.model prefix.
-    state = {(key if key.startswith('base_model.model.') else 'base_model.model.' + key):
-             value.detach().cpu().contiguous().clone() for key, value in state.items()}
-    save_file(state, str(destination / 'adapter_model.safetensors'))
-    raw.peft_config['default'].save_pretrained(str(destination))
-    print(f'Saved full training state + portable LoRA: {destination}', flush=True)
+    """Save LoRA + optimizer/RNG by default; no frozen-transformer duplication."""
+    from compact_checkpoint import save_checkpoint
+    save_checkpoint(accelerator, model, path)
 
 
 def main(args):
@@ -537,6 +523,20 @@ def main(args):
         model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
             model, optimizer, train_dataloader, lr_scheduler
         )
+
+    from compact_checkpoint import register_checkpoint_hooks
+    checkpoint_mode = args.train.get('checkpoint_format', 'lora')
+    if checkpoint_mode == 'lora' and ema_decay != 0:
+        raise ValueError('Compact LoRA checkpoint currently requires ema_decay: 0')
+    register_checkpoint_hooks(
+        accelerator, model, scheduler=lr_scheduler, mode=checkpoint_mode,
+        base_info={
+            'transformer': str(args.model.pretrained_model_path),
+            'text_encoder': str(args.model.pretrained_text_encoder_model_name_or_path),
+            'vae': str(args.model.pretrained_vae_model_name_or_path),
+        },
+    )
+    logger.info(f'Checkpoint format: {checkpoint_mode}; frozen transformer omitted when format=lora')
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) * args.train.rl.num_update_steps_per_sampling)

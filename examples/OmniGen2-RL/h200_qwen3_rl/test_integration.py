@@ -52,6 +52,12 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             prepare_run.prepare_rows(metadata, self.root)
 
+    def test_write_probe_is_removed(self):
+        prepare_run.probe_write_capacity(self.root, 1)
+        self.assertFalse((self.root / '.checkpoint_write_probe').exists())
+        with self.assertRaises(ValueError):
+            prepare_run.probe_write_capacity(self.root, -1)
+
     def test_offline_model_uses_main_revision(self):
         base = self.root / 'models--owner--model'
         (base / 'refs').mkdir(parents=True)
@@ -98,7 +104,7 @@ class IntegrationTests(unittest.TestCase):
                         reward_checkpoint=str(checkpoint.resolve()), omnigen_transformer_bin=str(transformer.resolve()),
                         text_encoder=str(text.resolve()), vae_model=str(vae.parent.resolve()))
         (bundle / 'settings.json').write_text(json.dumps(settings))
-        for name in ('train.yml', 'train_h200.py', 'reward_server.py', 'reward_runtime.py'):
+        for name in ('train.yml', 'train_h200.py', 'compact_checkpoint.py', 'reward_server.py', 'reward_runtime.py'):
             shutil.copy2(BUNDLE / name, bundle / name)
         run = self.root / 'job_1'
         with patch.object(sys, 'argv', ['prepare_run.py', '--bundle', str(bundle), '--run-dir', str(run)]):

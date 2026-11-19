@@ -9,6 +9,29 @@ import socket
 import sys
 
 
+def probe_write_capacity(directory, mib):
+    """An actual write/fsync catches quota errors that df cannot detect."""
+    if mib < 0:
+        raise ValueError('write-probe-mib must be nonnegative')
+    if not mib:
+        return
+    path = directory / '.checkpoint_write_probe'
+    print(f'Checking {mib} MiB of actual checkpoint write capacity...', flush=True)
+    try:
+        chunk = b'\0' * (1024 * 1024)
+        with path.open('xb') as stream:
+            for _ in range(mib):
+                stream.write(chunk)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        raise OSError(exc.errno, f'Checkpoint quota/write probe failed before loading models: {exc}') from exc
+    finally:
+        if path.exists():
+            path.unlink()
+    print('Write probe OK; temporary probe file removed. Future quota usage can still change.', flush=True)
+
+
 def prepare_rows(metadata, data_root, verify=True):
     from PIL import Image
     rows, seen_pairs, seen_keys = [], set(), set()
@@ -76,11 +99,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run-dir', type=Path, required=True)
     parser.add_argument('--bundle', type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument('--write-probe-mib', type=int, default=0)
     args = parser.parse_args()
     bundle = args.bundle.resolve()
     settings = json.loads((bundle / 'settings.json').read_text(encoding='utf-8'))
     run = args.run_dir.resolve()
     run.mkdir(parents=True, exist_ok=False)
+    probe_write_capacity(run, args.write_probe_mib)
     settings['reward_project'] = str(Path(settings['reward_project']).resolve())
     for path in (Path(settings['reward_project']) / 'src/models/custom_qwen3_vl_reranker.py',
                  Path(settings['reward_pretrained']) / 'config.json', Path(settings['reward_checkpoint'])):
@@ -119,7 +144,7 @@ def main():
     (run / 'settings.json').write_text(json.dumps(settings, indent=2), encoding='utf-8')
     # Freeze every executable and loader used by this job, so later edits do not change a running job.
     import shutil
-    for name in ('train_h200.py', 'reward_server.py', 'reward_runtime.py'):
+    for name in ('train_h200.py', 'compact_checkpoint.py', 'reward_server.py', 'reward_runtime.py'):
         shutil.copy2(bundle / name, run / name)
     (run / 'repo_rl_path.txt').write_text(str(bundle.parent))
     print(json.dumps({'run': str(run), 'unique_pairs': len(rows), 'model': config['model'],
