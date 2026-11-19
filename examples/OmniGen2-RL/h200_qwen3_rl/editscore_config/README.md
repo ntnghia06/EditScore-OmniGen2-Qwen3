@@ -13,6 +13,11 @@ biến thể đều là cấu hình dùng cho mọi kết quả trong bài báo.
 
 ## Các file
 
+Vị trí trong repo: `examples/OmniGen2-RL/h200_qwen3_rl/editscore_config/`.
+
+Vị trí trên server:
+`/datastore/anhndt/Truongtq/TrainingEditingModel/EditScore-Qwen3-new/examples/OmniGen2-RL/h200_qwen3_rl/editscore_config`.
+
 ```text
 editscore_config/
   README.md
@@ -143,7 +148,7 @@ tìm train.py theo vị trí tương đối của script.
 Ví dụ khi đã được cấp đủ GPU, chuẩn bị dữ liệu/pretrained và reward server:
 
 ```bash
-cd /path/to/EditScore/examples/OmniGen2-RL
+cd /datastore/anhndt/Truongtq/TrainingEditingModel/EditScore-Qwen3-new/examples/OmniGen2-RL
 
 # Recipe gốc: 1 máy, 8 GPU policy.
 bash scripts/train/omnigen2_edit_rl_single_machine_editscore7b.sh \
