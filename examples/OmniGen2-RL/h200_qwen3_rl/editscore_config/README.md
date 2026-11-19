@@ -1,21 +1,83 @@
 # OmniGen2 Flow-GRPO: setting EditScore, reward Qwen3 và data EditReward
 
-Bộ chạy này giữ hyperparameter policy của EditScore gốc, sử dụng reward
-Qwen3 custom và dữ liệu trong `../settings.json` của bạn.
+## Chạy từ một lệnh
 
-Nguồn recipe: VectorSpaceLab/EditScore, commit
+Chỉnh đường dẫn và tài nguyên trong **settings.json của thư mục này**, rồi:
+
+```bash
+cd /datastore/anhndt/Truongtq/TrainingEditingModel/EditScore-Qwen3-new/examples/OmniGen2-RL/h200_qwen3_rl/editscore_config
+python3 submit_train.py
+```
+
+Lệnh trên tự gọi sbatch. Không cần bật reward server, đặt IP, export biến môi
+trường hoặc tự launch từng máy. Lệnh submit chỉ dùng Python standard library;
+policy và reward dùng hai môi trường Conda đã cài ở đường dẫn cấu hình.
+Không tự cài dependency hoặc tải pretrained.
+
+Sau khi allocation được cấp, job tự thực hiện:
+
+1. Lấy hostname các máy policy và reward từ Slurm.
+2. Chọn port trên máy reward và tạo config runtime.
+3. Kiểm tra ghi 512 MiB, đọc/kiểm tra data và resolve pretrained.
+4. Chạy Qwen3 trên GPU reward riêng, chờ ping có đúng run_id của job.
+5. Launch toàn bộ máy policy bằng Accelerate FSDP.
+6. Theo dõi policy/reward; dừng policy nếu reward chết; tắt reward khi train xong.
+
+## File cần chỉnh: settings.json
+
+| Trường | Nội dung |
+|---|---|
+| metadata | unique_metadata.jsonl của bạn |
+| data_root | thư mục gốc chứa ảnh source |
+| omnigen_transformer_bin | file OmniGen2 transformer/pytorch_model.bin đã extract |
+| text_encoder | thư mục local Qwen2.5-VL-3B-Instruct |
+| vae_model | thư mục local FLUX.1-dev, có vae/config.json |
+| reward_project | project chứa src/models/custom_qwen3_vl_reranker.py |
+| reward_pretrained | thư mục Qwen3-VL-Reranker-8B |
+| reward_checkpoint | checkpoint Stage2 của bạn |
+| conda_sh | file khởi tạo Conda |
+| train_env | đường dẫn môi trường OmniGen2 |
+| reward_env | đường dẫn môi trường Qwen3 |
+| recipe | train.yml (8 GPU) hoặc train_4machine.yml (32 GPU) |
+| slurm | account, partition, QoS, GRES, CPU, RAM và thời gian |
+
+Các đường dẫn pretrained mẫu đã điền theo thư mục tải trước đây; sửa lại
+nếu pretrained thực tế nằm nơi khác. Bộ tự động không đọc settings.json ở
+thư mục cha. reward_host, reward_bind_host và port được chọn lại lúc job chạy.
+Nếu cần đăng nhập WandB trực tuyến, chỉnh wandb_mode; mặc định offline vẫn
+ghi các metric tại máy chạy.
+
+## Tài nguyên Slurm
+
+Bộ chạy dùng heterogeneous job: group 0 cho policy, group 1 cho reward.
+Tài liệu: https://slurm.schedmd.com/heterogeneous_jobs.html
+
+| Recipe | Policy | Reward bổ sung | Tổng GPU |
+|---|---|---|---:|
+| train.yml | 1 máy × 8 GPU | 1 GPU | 9 |
+| train_4machine.yml | 4 máy × 8 GPU | 1 GPU | 33 |
+
+Mỗi máy policy phải được cấp đúng 8 GPU phù hợp bộ nhớ/compute của recipe.
+Không tự đổi 8 GPU thành một MIG hoặc giảm batch. GRES mặc định gpu:8 cho
+policy và gpu:1 cho reward là yêu cầu generic; đặt type GRES và QoS đúng với
+cluster để nhận loại GPU mong muốn. Cluster phải cho phép heterogeneous job,
+đủ tài nguyên và mạng giữa các compute node. Nếu Slurm từ chối tài nguyên,
+cần điều chỉnh các trường slurm theo phân bổ được cấp hoặc dùng cluster có
+đủ GPU; bộ chạy không thể vượt giới hạn tài khoản.
+
+Có thể chỉ tạo jobscript để xem trước:
+
+```bash
+python3 submit_train.py --prepare-only
+```
+
+Lệnh in đường dẫn file run_train.slurm đã sinh. Có thể tự sbatch file đó.
+File được sinh bằng UTF-8/LF để tránh lỗi DOS line breaks.
+
+## Setting train theo EditScore gốc
+
+Nguồn: VectorSpaceLab/EditScore commit
 `4609c5d2ebb62fdebf665d3c924686d896ef1f74`.
-
-## File và setting
-
-- `train.yml`: recipe single-machine, 8 GPU policy.
-- `train_4machine.yml`: recipe 4 máy × 8 GPU policy.
-- `settings.json`: kế thừa `../settings.json`, bổ sung địa chỉ/port reward.
-- `prepare_profile.py`: kiểm tra recipe, chuẩn bị data và đóng băng run.
-- `start_reward.sh`: chạy Qwen3 trên một GPU reward riêng.
-- `launch_policy.sh`: launch trainer gốc bằng Accelerate FSDP.
-- `upstream_reference/`: bản lưu 11 file gốc và manifest SHA256; không dùng
-  reward/data config trong đó để chạy bộ này.
 
 | Tham số | train.yml | train_4machine.yml |
 |---|---:|---:|
@@ -27,123 +89,60 @@ Nguồn recipe: VectorSpaceLab/EditScore, commit
 | batch_size_per_forward mỗi GPU | 9 | 9 |
 | gradient_accumulation_steps trong YAML | 1 | 1 |
 | num_update_steps_per_sampling | 2 | 2 |
-| Ảnh đóng góp mỗi optimizer update, toàn bộ GPU | 72 | 288 |
+| Ảnh mỗi optimizer update, toàn bộ GPU | 72 | 288 |
 | max_train_steps | 1000 | 1000 |
 | learning_rate | 4e-4 | 4e-4 |
 | warmup_t | 0 | 0 |
 
 Giữ nguyên phần train, transport, val, logger, seed, kiến trúc và xử lý ảnh/text
-của upstream tương ứng. Khác tên run và đường dẫn data/reward; đường dẫn
-pretrained được resolve theo settings thực tế. Recipe 32 GPU lấy từ cấu hình
-policy Avg@4 gốc; Avg@4 là cách chấm EditScore, không áp dụng cho Qwen3.
+của upstream tương ứng. Khác tên run, data và reward; pretrained dùng local path.
+Recipe 32 GPU lấy phần policy của config Avg@4 gốc; không áp dụng Avg@4 cho Qwen3.
 
-Setting chung:
-
-- LoRA rank 32, alpha 64, dropout 0; BF16, gradient checkpointing, EMA 0.
-- AdamW betas (0.9, 0.95), weight decay 0.01, eps 1e-8; max grad norm 1.
-- Scheduler timm_constant_with_warmup, không scale LR.
+- LoRA rank 32, alpha 64, dropout 0; BF16; gradient checkpointing; EMA 0.
+- AdamW betas (0.9, 0.95), weight decay 0.01, eps 1e-8, gradient norm tối đa 1.
 - Sampling 20 bước, sigma_coef 0.7, text guidance 4, image guidance 2,
-  CFG range [0.0, 0.6], train_timesteps_fraction 0.6, reuse 1.
+  CFG range [0.0, 0.6]; train 12 transition mỗi ảnh; reuse 1.
 - PPO clip [1e-4, 5e-4], advantage clip [-5, 5], KL weight 0.04;
-  policy_loss_reweighting bật. Không sửa công thức loss.
-- Max input/output area 262144 pixel, max side 2048; maximum_text_tokens 888,
-  RL max_sequence_length 1024. Giới hạn diện tích không ép mọi ảnh thành vuông.
-- Logger WandB + TensorBoard; checkpoint mỗi 50 update, không giới hạn số
-  checkpoint theo YAML gốc. Cần cài backend và cấu hình WandB.
-- Checkpoint Accelerate/FSDP gốc, không dùng compact checkpoint một GPU.
-  Trainer gốc còn lưu text encoder/tokenizer khi bắt đầu run.
+  policy loss reweighting bật.
+- Max output area 262144 pixel; max input area [262144] × 4; max side 2048.
+- maximum_text_tokens 888; RL max_sequence_length 1024.
+- Checkpoint mỗi 50 optimizer update, không giới hạn retention như YAML gốc.
+  Checkpoint dùng Accelerate/FSDP gốc, không dùng compact checkpoint một GPU.
+  Trainer gốc còn lưu text encoder và tokenizer lúc khởi động.
 
-1000 update với 2 update/vòng tương ứng 500 vòng sampling: recipe 8 GPU có
-6000 lượt điều kiện và 72000 rollout; recipe 32 GPU có 24000 lượt điều kiện
-và 288000 rollout. Số điều kiện duy nhất phụ thuộc dataset/sampler.
+Qwen3 đóng băng, chọn metric có relevance trung bình nhóm >= 0.5 rồi lấy trung
+bình raw score làm reward. Không chia 10 hoặc thay bằng reward EditScore.
+Rank 0 gửi global batch tới server: 72 pair-forward/vòng cho recipe 8 GPU,
+288 cho 32 GPU. Timeout reward client gốc vẫn áp dụng.
 
-## Reward và data
+## Log, output và snapshot
 
-Kế thừa đường dẫn đang có trong `../settings.json`:
+Mỗi lần submit tạo `outputs/submission_<timestamp>_<id>/`:
 
 ```text
-metadata:
-/datastore/anhndt/Truongtq/TrainingEditingModel/RunFLUX/unique_metadata.jsonl
-data_root:
-/datastore/shared/datasets/EditReward-Data/extracted_data
-reward_pretrained:
-/datastore/truongtq/TrainingRewardModel/Models/Qwen3-VL-Reranker-8B
-reward_checkpoint:
-/datastore/truongtq/TrainingRewardModel/TrainingRewardModel/Qwen3-VL-Embedding/output_training/Stage2_R0RelKL10kDecay98CosineOnceBatch4Eval5
+run_train.slurm
+snapshot/                      # settings/config/helper frozen khi submit
+upstream_train.py              # trainer nguồn frozen khi submit
+logs/job_<jobid>.out
+logs/job_<jobid>.err
+logs/reward.log
+logs/policy.log
+run/train.yml
+run/data.yml
+run/reward_server.yml
+run/training_pairs.jsonl
+run/experiments/<name>/checkpoint-N/
 ```
 
-Qwen3 đóng băng, infer theo cặp A/B. Chọn chung các metric có relevance trung
-bình nhóm >= 0.5; reward mỗi ảnh là trung bình cộng raw score của các metric
-được chọn. Không chia 10, không lấy trung bình nhân, không dùng margin A/B.
-Không metric nào được chọn thì theo empty_metric_policy, mặc định error.
+Sửa settings hoặc seed sau khi submit không đổi snapshot của job đã nộp.
+Đây là checkpoint FSDP sharded; không giả định có lora_adapter/ như helper
+một GPU. Model module vẫn được import từ repo, nên giữ source trong lúc chạy.
+Trainer chỉ thêm guard dừng max_train_steps ở đầu vòng dataloader.
 
-Rank 0 gửi toàn bộ global batch tới một server Qwen3: 72 pair-forward/vòng
-cho recipe 8 GPU hoặc 288 cho recipe 32 GPU. Giới hạn timeout của reward
-client gốc vẫn áp dụng. GPU reward là tài nguyên bổ sung ngoài GPU policy.
+Các file chuẩn bị/launch thủ công vẫn giữ để dùng tùy chọn. Bản lưu upstream
+ở upstream_reference/ chỉ phục vụ kiểm chứng SHA256, không dùng reward/data
+gốc của nó cho job này.
 
-## Chuẩn bị run
-
-Thư mục server:
-`/datastore/anhndt/Truongtq/TrainingEditingModel/EditScore-Qwen3-new/examples/OmniGen2-RL/h200_qwen3_rl/editscore_config`.
-
-Trước khi prepare, kiểm tra pretrained trong `../settings.json`. Nếu reward
-khác máy rank 0, đặt `reward_host` trong settings.json của thư mục này thành
-IP/hostname máy reward; reward_bind_host giữ 0.0.0.0, chọn port còn trống.
-Nếu cùng máy, có thể giữ reward_host 127.0.0.1.
-
-```bash
-source /datastore/truongtq/miniconda3/etc/profile.d/conda.sh
-conda activate /datastore/truongtq/miniconda3/envs/omnigen2-rl
-cd /datastore/anhndt/Truongtq/TrainingEditingModel/EditScore-Qwen3-new/examples/OmniGen2-RL/h200_qwen3_rl/editscore_config
-
-RUN="$PWD/outputs/editscore_qwen3_$(date +%Y%m%d_%H%M%S)"
-python prepare_profile.py --config train.yml --run-dir "$RUN"
-echo "$RUN"
-```
-
-Để dùng 32 GPU, thay bằng `--config train_4machine.yml`. Mỗi run dùng thư mục
-mới. Giữ lại đường dẫn RUN, dùng cùng run trên filesystem chung giữa mọi máy.
-Config, data và trainer/reward code được đóng băng trong run.
-
-## Launch trong tài nguyên GPU đã được cấp
-
-Không chạy training trên login node. Các shell không tự xin GPU hoặc đặt QoS.
-Không dùng chung GPU policy và reward trong bộ chạy này.
-
-Trên máy/GPU reward, giữ server chạy và chờ log Reward ready:
-
-```bash
-RUN=/absolute/path/to/prepared/run
-CUDA_VISIBLE_DEVICES=0 bash start_reward.sh "$RUN" > "$RUN/reward.log" 2>&1
-```
-
-Script reward dùng môi trường `/datastore/truongtq/miniconda3/envs/qwen_vl`.
-CUDA_VISIBLE_DEVICES phải theo phân bổ thực tế của scheduler.
-
-Recipe 8 GPU, trên máy policy được cấp đúng 8 GPU:
-
-```bash
-RUN=/absolute/path/to/prepared/run
-bash launch_policy.sh "$RUN" 0 127.0.0.1
-```
-
-Recipe 32 GPU, chạy trên cả 4 máy với cùng RUN; MASTER_ADDR là IP máy policy
-rank 0 mà các máy khác truy cập được:
-
-```bash
-bash launch_policy.sh "$RUN" 0 MASTER_ADDR  # máy 0
-bash launch_policy.sh "$RUN" 1 MASTER_ADDR  # máy 1
-bash launch_policy.sh "$RUN" 2 MASTER_ADDR  # máy 2
-bash launch_policy.sh "$RUN" 3 MASTER_ADDR  # máy 3
-```
-
-Launcher dùng HYBRID_SHARD, TRANSFORMER_BASED_WRAP, OmniGen2TransformerBlock,
-SHARDED_STATE_DICT, use_orig_params True, sync_module_states True như upstream.
-Không đếm MIG bằng nvidia-smi để quyết định world size. Trainer lấy từ train.py
-gốc và chỉ thêm guard dừng theo max_train_steps ở đầu vòng dataloader.
-
-Output trainer: `RUN/experiments/<name trong train.yml>/checkpoint-N/`.
-Đây là checkpoint FSDP sharded, không giả định có lora_adapter như helper một GPU.
-
-Đã kiểm tra recipe khớp upstream, chuẩn bị run bằng fixture CPU và cú pháp
-shell. Chưa chạy thực nghiệm 8/32 GPU, chưa đo VRAM/thời gian trên cluster.
+Đã kiểm tra config, chuẩn bị dữ liệu bằng fixture CPU, topology 8/32 GPU,
+snapshot, readiness và cleanup qua process mock. Chưa thử allocation Slurm
+hoặc training nhiều GPU thực tế.

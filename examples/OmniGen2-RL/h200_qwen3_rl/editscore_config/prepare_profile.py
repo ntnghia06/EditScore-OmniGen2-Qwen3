@@ -35,9 +35,13 @@ def main():
     parser.add_argument('--config', choices=('train.yml', 'train_4machine.yml'), default='train.yml')
     parser.add_argument('--run-dir', type=Path, required=True)
     parser.add_argument('--write-probe-mib', type=int, default=512)
+    parser.add_argument('--repo-rl', type=Path, help='Original OmniGen2-RL source directory when preparing a frozen submission')
+    parser.add_argument('--trainer-source', type=Path, help='Optional frozen copy of upstream train.py')
     args = parser.parse_args()
     profile = Path(__file__).resolve().parent
     bundle, rl = profile.parent, profile.parent.parent
+    if args.repo_rl is not None:
+        rl = args.repo_rl.resolve()
     helper = load_helpers(bundle)
     config = yaml.safe_load((profile / args.config).read_text(encoding='utf-8'))
     original = ('omnigen2_edit_rl_single_machine_editscore7b.yml' if args.config == 'train.yml'
@@ -45,9 +49,13 @@ def main():
     reference = yaml.safe_load((profile / 'upstream_reference/options' / original).read_text())
     check_recipe(config, reference)
     overrides = json.loads((profile / 'settings.json').read_text(encoding='utf-8'))
-    base = Path(overrides.pop('base_settings'))
-    base = base if base.is_absolute() else profile / base
-    settings = json.loads(base.read_text(encoding='utf-8'))
+    base_value = overrides.pop('base_settings', None)
+    if base_value:
+        base = Path(base_value)
+        base = base if base.is_absolute() else profile / base
+        settings = json.loads(base.read_text(encoding='utf-8'))
+    else:
+        settings = {}
     settings.update(overrides)
     for path in (Path(settings['reward_project']) / 'src/models/custom_qwen3_vl_reranker.py',
                  Path(settings['reward_pretrained']) / 'config.json', Path(settings['reward_checkpoint'])):
@@ -56,6 +64,7 @@ def main():
     if not 1 <= int(settings['port']) <= 65535:
         raise ValueError('Reward port must be in 1..65535')
     run = args.run_dir.resolve()
+    settings['run_id'] = str(run)
     run.mkdir(parents=True, exist_ok=False)
     helper.probe_write_capacity(run, args.write_probe_mib)
     roots = settings['hf_cache_roots']
@@ -83,7 +92,8 @@ def main():
     (run / 'train.yml').write_text(yaml.safe_dump(config, sort_keys=False))
     (run / 'settings.json').write_text(json.dumps(settings, indent=2), encoding='utf-8')
     # Use upstream distributed/FSDP training, never the single-GPU trainer.
-    trainer = (rl / 'train.py').read_text(encoding='utf-8')
+    trainer_source = args.trainer_source or rl / 'train.py'
+    trainer = trainer_source.read_text(encoding='utf-8')
     # Stop at the requested optimizer limit even before the dataloader epoch ends.
     needle = '        for step, batch in enumerate(train_dataloader):\n'
     if trainer.count(needle) != 1:
@@ -96,13 +106,14 @@ def main():
     if reward.count(needle) != 1:
         raise ValueError('Reward server binding changed; review distributed binding')
     reward = reward.replace(needle, "HTTPServer((worker.settings.get('reward_bind_host', '127.0.0.1'), port), Handler)")
+    reward = reward.replace("{'ready': self.path == '/ping'}", "{'ready': self.path == '/ping', 'run_id': worker.settings.get('run_id')}")
     (run / 'reward_server.py').write_text(reward, encoding='utf-8', newline='\n')
     shutil.copy2(bundle / 'reward_runtime.py', run / 'reward_runtime.py')
     (run / 'repo_rl_path.txt').write_text(str(rl))
     world_size = config['train']['global_batch_size'] // config['train']['batch_size']
     metadata = {'policy_processes': world_size, 'machines': world_size // 8,
                 'dataset_pairs': len(rows), 'reward_host': settings['reward_host'],
-                'reward_port': settings['port'], 'upstream_train_sha256': hashlib.sha256((rl / 'train.py').read_bytes()).hexdigest(),
+                'reward_port': settings['port'], 'upstream_train_sha256': hashlib.sha256(trainer_source.read_bytes()).hexdigest(),
                 'output_dir': str(run / 'experiments' / config['name'])}
     (run / 'launch.json').write_text(json.dumps(metadata, indent=2))
     print(json.dumps({'run': str(run), **metadata}, indent=2), flush=True)
